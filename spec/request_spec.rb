@@ -17,24 +17,24 @@ describe RestClient::Request do
 		@net.stub!(:verify_mode=)
 	end
 
-	it "requests xml mimetype" do
-		@request.default_headers[:accept].should == 'application/xml'
+	it "accept */* mimetype, preferring xml" do
+		@request.default_headers[:accept].should == '*/*; q=0.5, application/xml'
 	end
 
 	it "decodes an uncompressed result body by passing it straight through" do
-		@request.decode(nil, 'xyz').should == 'xyz'
+		RestClient::Request.decode(nil, 'xyz').should == 'xyz'
 	end
 
 	it "decodes a gzip body" do
-		@request.decode('gzip', "\037\213\b\b\006'\252H\000\003t\000\313T\317UH\257\312,HM\341\002\000G\242(\r\v\000\000\000").should == "i'm gziped\n"
+		RestClient::Request.decode('gzip', "\037\213\b\b\006'\252H\000\003t\000\313T\317UH\257\312,HM\341\002\000G\242(\r\v\000\000\000").should == "i'm gziped\n"
 	end
 
 	it "ingores gzip for empty bodies" do
-		@request.decode('gzip', '').should be_empty
+		RestClient::Request.decode('gzip', '').should be_empty
 	end
 
 	it "decodes a deflated body" do
-		@request.decode('deflate', "x\234+\316\317MUHIM\313I,IMQ(I\255(\001\000A\223\006\363").should == "some deflated text"
+		RestClient::Request.decode('deflate', "x\234+\316\317MUHIM\313I,IMQ(I\255(\001\000A\223\006\363").should == "some deflated text"
 	end
 
 	it "processes a successful result" do
@@ -222,6 +222,20 @@ describe RestClient::Request do
 		lambda { @request.process_result(res) }.should raise_error(RestClient::Redirect) { |e| e.url.should == 'http://some/index' }
 	end
 
+	it "uses GET and clears payload when following 30x redirects" do
+		url = "http://example.com/redirected"
+
+		@request.should_receive(:execute_inner).once.ordered.and_raise(RestClient::Redirect.new(url))
+
+		@request.should_receive(:execute_inner).once.ordered do
+			@request.url.should == url
+			@request.method.should == :get
+			@request.payload.should be_nil
+		end
+
+		@request.execute
+	end
+
 	it "raises Unauthorized when the response is 401" do
 		res = mock('response', :code => '401')
 		lambda { @request.process_result(res) }.should raise_error(RestClient::Unauthorized)
@@ -278,6 +292,12 @@ describe RestClient::Request do
 		@request.response_log(res).should == "# => 200 OK |  4 bytes"
 	end
 
+	it "logs a response with a nil body" do
+		res = mock('result', :code => '200', :class => Net::HTTPOK, :body => nil)
+		res.stub!(:[]).with('Content-type').and_return('text/html; charset=utf-8')
+		@request.response_log(res).should == "# => 200 OK | text/html 0 bytes"
+	end
+
 	it "strips the charset from the response content type" do
 		res = mock('result', :code => '200', :class => Net::HTTPOK, :body => 'abcd')
 		res.stub!(:[]).with('Content-type').and_return('text/html; charset=utf-8')
@@ -330,13 +350,13 @@ describe RestClient::Request do
 		@request.verify_ssl.should == false
 	end
 
-	it "should set net.verify_mode to OpenSSL::SSL::VERIFY_NONE if verify_ssl is false" do
-		@net.should_receive(:verify_mode=).with(OpenSSL::SSL::VERIFY_NONE)
-		@http.stub!(:request)
-		@request.stub!(:process_result)
-		@request.stub!(:response_log)
-		@request.transmit(@uri, 'req', 'payload')
-	end
+  it "should set net.verify_mode to OpenSSL::SSL::VERIFY_NONE if verify_ssl is false" do
+    @net.should_receive(:verify_mode=).with(OpenSSL::SSL::VERIFY_NONE)
+    @http.stub!(:request)
+    @request.stub!(:process_result)
+    @request.stub!(:response_log)
+    @request.transmit(@uri, 'req', 'payload')
+  end
 
 	it "should not set net.verify_mode to OpenSSL::SSL::VERIFY_NONE if verify_ssl is true" do
 		@request = RestClient::Request.new(:method => :put, :url => 'https://some/resource', :payload => 'payload', :verify_ssl => true)
@@ -346,6 +366,20 @@ describe RestClient::Request do
 		@request.stub!(:response_log)
 		@request.transmit(@uri, 'req', 'payload')
 	end
+
+  it "should set net.verify_mode to the passed value if verify_ssl is an OpenSSL constant" do
+    mode     = OpenSSL::SSL::VERIFY_PEER |
+               OpenSSL::SSL::VERIFY_FAIL_IF_NO_PEER_CERT
+		@request = RestClient::Request.new( :method     => :put,
+		                                    :url        => 'https://some/resource',
+		                                    :payload    => 'payload',
+		                                    :verify_ssl => mode )
+    @net.should_receive(:verify_mode=).with(mode)
+    @http.stub!(:request)
+    @request.stub!(:process_result)
+    @request.stub!(:response_log)
+    @request.transmit(@uri, 'req', 'payload')
+  end
 
 	it "should default to not having an ssl_client_cert" do
 		@request.ssl_client_cert.should be(nil)

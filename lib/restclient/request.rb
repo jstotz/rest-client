@@ -39,6 +39,8 @@ module RestClient
 			execute_inner
 		rescue Redirect => e
 			@url = e.url
+			@method = :get
+			@payload = nil
 			execute
 		end
 
@@ -105,7 +107,11 @@ module RestClient
 
 			net = net_http_class.new(uri.host, uri.port)
 			net.use_ssl = uri.is_a?(URI::HTTPS)
-			net.verify_mode = OpenSSL::SSL::VERIFY_NONE if @verify_ssl == false
+			if @verify_ssl == false
+        net.verify_mode = OpenSSL::SSL::VERIFY_NONE
+      elsif @verify_ssl.is_a? Integer
+        net.verify_mode = @verify_ssl
+      end
 			net.cert = @ssl_client_cert if @ssl_client_cert
 			net.key = @ssl_client_key if @ssl_client_key
 			net.ca_file = @ssl_ca_file if @ssl_ca_file
@@ -167,7 +173,7 @@ module RestClient
 			if res.code =~ /\A2\d{2}\z/ 
 				# We don't decode raw requests
 				unless @raw_response
-					decode res['content-encoding'], res.body if res.body
+					self.class.decode res['content-encoding'], res.body if res.body
 				end
 			elsif %w(301 302 303).include? res.code
 				url = res.header['Location']
@@ -190,7 +196,7 @@ module RestClient
 			end
 		end
 
-		def decode(content_encoding, body)
+		def self.decode(content_encoding, body)
 			if content_encoding == 'gzip' and not body.empty?
 				Zlib::GzipReader.new(StringIO.new(body)).read
 			elsif content_encoding == 'deflate'
@@ -209,7 +215,7 @@ module RestClient
 		end
 
 		def response_log(res)
-			size = @raw_response ? File.size(@tf.path) : res.body.size
+			size = @raw_response ? File.size(@tf.path) : (res.body.nil? ? 0 : res.body.size)
 			"# => #{res.code} #{res.class.to_s.gsub(/^Net::HTTP/, '')} | #{(res['Content-type'] || '').gsub(/;.*$/, '')} #{size} bytes"
 		end
 
@@ -226,7 +232,7 @@ module RestClient
 		end
 
 		def default_headers
-			{ :accept => 'application/xml', :accept_encoding => 'gzip, deflate' }
+			{ :accept => '*/*; q=0.5, application/xml', :accept_encoding => 'gzip, deflate' }
 		end
 	end
 end
